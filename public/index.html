@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Yonder</title>
+<meta name="description" content="Learn the 8 parts of a great science fair lab report, then let the AI Grader check yours.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@500;700;800&display=swap">
+<link rel="stylesheet" href="/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0"></script>
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="topbar" id="topbar">
+  <div class="bar1">
+    <button class="brand" type="button" data-go="home">Yonder</button>
+    <div class="search">
+      <input id="q" type="search" placeholder="Search steps, parts and tips" autocomplete="off" aria-label="Search the site">
+      <div class="results" id="qResults" hidden></div>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Main">
+    <button class="tab" id="tabSteps" type="button" data-act="side" aria-expanded="true">Steps</button>
+    <button class="tab" type="button" data-go="home">Dashboard</button>
+    <button class="tab" type="button" data-go="ai">AI Grader</button>
+    <button class="tab" type="button" data-go="about">About Us</button>
+    <button class="tab" type="button" data-go="resources">Resources</button>
+    <button class="tab" type="button" data-go="faq">FAQ</button>
+    <button class="tab" type="button" data-go="contact">Contact</button>
+  </nav>
+</header>
+
+<aside class="side" id="side" aria-label="Steps">
+  <div class="side-head"><h2>Steps</h2><span class="muted small" id="sideCount"></span></div>
+  <ul class="steps" id="steps"></ul>
+</aside>
+<div class="side-scrim" data-act="side-close"></div>
+
+<div class="shell"><main id="main"></main></div>
+<p class="proto-note">Yonder · a science fair lab report guide</p>
+<div id="layer"></div>
+</body>
+</html>

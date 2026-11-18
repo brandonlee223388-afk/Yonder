@@ -266,16 +266,15 @@ function renderSide() {
     const doneN = s.parts.filter((_, i) => S.done.has(key(s.n, i + 1))).length;
     return `<li>
       <div class="step-row${active ? " active" : ""}">
-        <button class="step-link" type="button" data-go="step" data-s="${s.n}"><small>Step ${s.n}${doneN === s.parts.length ? " · Done" : ""}</small><b>${s.title}</b></button>
+        <button class="step-link" type="button" data-go="step" data-s="${s.n}"><small>Step ${s.n}${doneN === s.parts.length ? " · Done" : doneN ? ` · ${doneN}/${s.parts.length}` : ""}</small><b>${s.title}</b></button>
         <button class="toggle" type="button" data-act="toggle" data-s="${s.n}" aria-expanded="${open}">${open ? "Hide" : "Show"}</button>
       </div>
-      ${open ? `<ul class="parts">${s.parts.map((p, i) => `<li><button type="button" class="${active && S.part === i + 1 ? "active" : ""}" data-go="step" data-s="${s.n}" data-p="${i + 1}"><span>${p.title}</span>${S.done.has(key(s.n, i + 1)) ? `<span class="tag">Done</span>` : ""}</button></li>`).join("")}</ul>` : ""}
+      ${open ? `<ul class="parts">${s.parts.map((p, i) => `<li><button type="button" class="${active && S.part === i + 1 ? "active" : ""}" data-go="step" data-s="${s.n}" data-p="${i + 1}"><span>${p.title}</span>${S.done.has(key(s.n, i + 1)) ? `<span class="tick" title="Done" aria-label="Done">✓</span>` : ""}</button></li>`).join("")}</ul>` : ""}
     </li>`;
   }).join("");
 }
 
 /* ---------- views ---------- */
-const avatarSvg = '<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="36" r="18" fill="var(--soft)" stroke="var(--muted)" stroke-width="3"/><path d="M14 96c4-22 18-32 36-32s32 10 36 32" fill="var(--soft)" stroke="var(--muted)" stroke-width="3"/></svg>';
 
 function homeView() {
   const st = STEPS[S.last.s - 1], pt = st.parts[S.last.p - 1], pct = Math.round(S.done.size / TOTAL_PARTS * 100);
@@ -320,9 +319,9 @@ function homeView() {
         <button class="btn btn-accent" type="button" data-go="ai">Open AI Grader</button>
       </section>
     </div>
-    <section class="row" style="flex-direction:column;align-items:stretch;gap:12px">
+    <section class="stack">
       <span class="label">Our team</span>
-      <div class="team">${TEAM.map((m, i) => `<button class="mate" type="button" data-act="mate" data-i="${i}"><span class="pic">${avatarSvg}</span><b>${esc(m.name)}</b></button>`).join("")}</div>
+      <div class="team">${TEAM.map((m, i) => `<button class="mate" type="button" data-act="mate" data-i="${i}"><span class="pic" aria-hidden="true">${esc(m.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2))}</span><span class="who"><b>${esc(m.name)}</b><span>${esc(m.role)}</span></span></button>`).join("")}</div>
     </section>`;
 }
 
@@ -334,15 +333,20 @@ function stepView() {
       <span class="label">Step ${s} of ${STEPS.length}</span>
       <h1>${step.title}</h1>
       <p>${step.summary}</p>
-      <ol class="part-list">${step.parts.map((pt, i) => `<li><button class="part-card" type="button" data-go="step" data-s="${s}" data-p="${i + 1}"><span><small>Part ${i + 1}</small><b>${pt.title}</b></span>${S.done.has(key(s, i + 1)) ? `<span class="tag">Done</span>` : ""}</button></li>`).join("")}</ol>
+      <ol class="part-list">${step.parts.map((pt, i) => `<li><button class="part-card" type="button" data-go="step" data-s="${s}" data-p="${i + 1}"><span><small>Part ${i + 1}</small><b>${pt.title}</b></span>${S.done.has(key(s, i + 1)) ? `<span class="tick" title="Done" aria-label="Done">✓</span>` : ""}</button></li>`).join("")}</ol>
       <div class="row"><button class="btn btn-accent" type="button" data-go="step" data-s="${s}" data-p="${fu}">${any ? `Continue with Part ${fu}` : "Start Part 1"}</button></div>
     </section>`;
   }
   const p = S.part, part = step.parts[p - 1], next = nextOf(s, p), prev = prevOf(s, p), isDone = S.done.has(key(s, p));
   return `<section class="view">
-    <span class="label">Step ${s} · ${step.title} · Part ${p} of ${step.parts.length}</span>
-    <h1>${part.title}</h1>
-    <div class="chips subparts" aria-label="Parts of this step">${step.parts.map((pt, i) => `<button class="chip${i + 1 === p ? " on" : ""}" type="button" data-go="step" data-s="${s}" data-p="${i + 1}">${s}.${i + 1} ${pt.title}${S.done.has(key(s, i + 1)) ? " · Done" : ""}</button>`).join("")}</div>
+    <div class="view-head">
+      <div><span class="label">Step ${s} · ${step.title} · Part ${p} of ${step.parts.length}</span><h1>${part.title}</h1></div>
+      <div class="arrows">
+        <button class="arrow" type="button" aria-label="Previous part" ${prev ? `data-go="step" data-s="${prev[0]}" data-p="${prev[1]}"` : "disabled"}>←</button>
+        <button class="arrow" type="button" aria-label="Next part" ${next ? `data-go="step" data-s="${next[0]}" data-p="${next[1]}"` : "disabled"}>→</button>
+      </div>
+    </div>
+    <div class="chips subparts" aria-label="Parts of this step">${step.parts.map((pt, i) => `<button class="chip${i + 1 === p ? " on" : ""}" type="button" data-go="step" data-s="${s}" data-p="${i + 1}">${s}.${i + 1} ${pt.title}${S.done.has(key(s, i + 1)) ? " ✓" : ""}</button>`).join("")}</div>
     <div class="content">${part.html}</div>
     <div class="part-foot">
       ${prev ? `<button class="btn btn-ghost" type="button" data-go="step" data-s="${prev[0]}" data-p="${prev[1]}">Previous</button>` : "<span></span>"}
