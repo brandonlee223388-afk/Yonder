@@ -228,12 +228,15 @@ const S = {
   done: new Set(store.get("done", [])),
   last: store.get("last", { s: 1, p: 1 }),
   open: new Set(),
-  session: null, auth: "signup", authMsg: "", authBusy: false,
+  session: null,
   layer: null,
   check: new Set(store.get("check", [])),
   fb: { topic: "Question", msg: "", sent: false, busy: false }
 };
-let sb = null, dailyLimit = 5;
+let sb = null, clerk = null, dailyLimit = 5;
+const CLERK_JS = "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6.42.3/dist/clerk.browser.js";
+/* Make Clerk's sign-in screens match Yonder. */
+const CLERK_LOOK = { variables: { colorPrimary: "#12a06e", colorText: "#18181b", fontFamily: "Geist, system-ui, sans-serif", borderRadius: "14px" } };
 if (!STEPS[S.last.s - 1]?.parts[S.last.p - 1]) S.last = { s: 1, p: 1 };
 S.open.add(S.last.s);
 const main = $("main");
@@ -278,28 +281,13 @@ function renderSide() {
 
 function homeView() {
   const st = STEPS[S.last.s - 1], pt = st.parts[S.last.p - 1], pct = Math.round(S.done.size / TOTAL_PARTS * 100);
-  const note = S.authMsg ? `<div class="tip"><b>Almost there</b>${esc(S.authMsg)}</div>` : "";
-  const busy = S.authBusy ? "disabled" : "";
   const auth = S.session
-    ? `<p>You're logged in as <b>${esc(displayName())}</b>. Your progress is saved to your account.</p><button class="link" type="button" data-act="signout" style="justify-self:start">Log out</button>`
-    : !sb
+    ? `<p>You're logged in as <b>${esc(S.session.name)}</b>. Your progress is saved to your account.</p>
+       <div class="row"><button class="btn btn-ghost" type="button" data-act="account">Manage account</button><button class="link" type="button" data-act="signout">Log out</button></div>`
+    : !clerk
     ? `<p class="muted">Accounts aren't available right now. You can still use the guide, and your progress saves in this browser.</p>`
-    : note + (S.auth === "signup"
-      ? `<form id="authForm" novalidate>
-          <label class="f" for="suName">Name<input class="input" id="suName" name="name" autocomplete="name"></label>
-          <label class="f" for="suEmail">Email<input class="input" id="suEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com"></label>
-          <label class="f" for="suPass">Password<input class="input" id="suPass" name="pass" type="password" autocomplete="new-password" placeholder="At least 6 characters"></label>
-          <p class="err" id="authErr" hidden></p>
-          <button class="btn btn-ink" type="submit" ${busy}>${S.authBusy ? "Creating account…" : "Create account"}</button>
-        </form>
-        <p class="small muted">Already have an account? <button class="link" type="button" data-act="auth" data-v="login">Log in</button></p>`
-      : `<form id="authForm" novalidate>
-          <label class="f" for="liEmail">Email<input class="input" id="liEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com"></label>
-          <label class="f" for="liPass">Password<input class="input" id="liPass" name="pass" type="password" autocomplete="current-password"></label>
-          <p class="err" id="authErr" hidden></p>
-          <button class="btn btn-ink" type="submit" ${busy}>${S.authBusy ? "Logging in…" : "Log in"}</button>
-        </form>
-        <p class="small muted">New here? <button class="link" type="button" data-act="auth" data-v="signup">Create an account</button></p>`);
+    : `<p class="muted">Create a free account to save your progress on any device and use the AI Grader.</p>
+       <div class="row"><button class="btn btn-ink" type="button" data-act="signup">Create account</button><button class="link" type="button" data-act="login">Log in</button></div>`;
   return `
     <h1 class="page-title">Dashboard</h1>
     <div class="cards">
@@ -634,11 +622,11 @@ async function grade() {
   updateAIControls(); renderAIResults();
   aiTimer = setInterval(() => { const t = $("aiTime"); if (t) t.textContent = Math.round((Date.now() - a.started) / 1000) + "s"; }, 1000);
   try {
-    const { data } = await sb.auth.getSession();
+    const token = await clerk?.session?.getToken();
     const res = await fetch("/api/grade", {
       method: "POST",
       signal: aiCtl.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token || ""}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
       body: JSON.stringify({ report: a.report, rubric: a.rubric })
     });
     const body = await res.json().catch(() => ({}));
@@ -654,7 +642,6 @@ async function grade() {
 }
 
 /* ---------- accounts and saved progress (Supabase) ---------- */
-const displayName = () => S.session?.user?.user_metadata?.name || S.session?.user?.email?.split("@")[0] || "";
 let saveTimer = null;
 function saveProgress() {
   store.set("done", [...S.done]); store.set("check", [...S.check]); store.set("last", S.last);
@@ -662,7 +649,7 @@ function saveProgress() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     sb.from("progress").upsert({
-      user_id: S.session.user.id, done: [...S.done], checklist: [...S.check],
+      user_id: S.session.id, done: [...S.done], checklist: [...S.check],
       last_step: S.last.s, last_part: S.last.p, updated_at: new Date().toISOString()
     }).then(() => {}, () => {});
   }, 600);
@@ -676,23 +663,38 @@ async function loadProgress() {
     store.set("done", [...S.done]); store.set("check", [...S.check]); store.set("last", S.last);
   } else saveProgress();
 }
-async function onSession(session) {
-  const changed = session?.user?.id !== S.session?.user?.id;
-  S.session = session;
-  if (session && changed) { S.authMsg = ""; await loadProgress().catch(() => {}); }
-  if (!session) S.ai.remaining = null;
-  render();
+function onUser(user) {
+  const next = user ? { id: user.id, name: user.firstName || user.fullName || user.primaryEmailAddress?.emailAddress?.split("@")[0] || "you" } : null;
+  const changed = next?.id !== S.session?.id;
+  S.session = next;
+  if (!next) S.ai.remaining = null;
+  if (next && changed) loadProgress().catch(() => {}).finally(render);
+  else render();
+}
+function loadScript(src, attrs = {}) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = src; el.async = true; el.crossOrigin = "anonymous";
+    Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+    el.onload = resolve; el.onerror = reject;
+    document.head.append(el);
+  });
 }
 async function initAccounts() {
   try {
     const cfg = await (await fetch("/api/config")).json();
     dailyLimit = cfg.dailyLimit || dailyLimit;
-    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !window.supabase) throw new Error("not configured");
-    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
-  } catch { sb = null; return render(); }
-  const { data } = await sb.auth.getSession();
-  await onSession(data.session);
-  sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => onSession(session), 0); });
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.clerkPublishableKey || !window.supabase) throw new Error("not configured");
+    await loadScript(CLERK_JS, { "data-clerk-publishable-key": cfg.clerkPublishableKey });
+    clerk = window.Clerk;
+    await clerk.load({ appearance: CLERK_LOOK });
+    /* Supabase trusts Clerk's login token, so each student's database rules still apply. */
+    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+      accessToken: async () => (await clerk.session?.getToken()) ?? null
+    });
+  } catch { clerk = null; sb = null; return render(); }
+  onUser(clerk.user);
+  clerk.addListener(({ user }) => { if ((user?.id ?? null) !== (S.session?.id ?? null)) onUser(user); });
 }
 
 /* ---------- events ---------- */
@@ -707,8 +709,10 @@ document.addEventListener("click", (e) => {
     case "side": return setSide(!document.body.classList.contains("side-open"));
     case "side-close": return setSide(false);
     case "toggle": { const n = +a.dataset.s; S.open.has(n) ? S.open.delete(n) : S.open.add(n); return renderSide(); }
-    case "auth": S.auth = a.dataset.v; return render();
-    case "signout": sb?.auth.signOut(); return;
+    case "signup": return clerk?.openSignUp();
+    case "login": return clerk?.openSignIn();
+    case "account": return clerk?.openUserProfile();
+    case "signout": clerk?.signOut(); return;
     case "mate": S.layer = { type: "mate", i: +a.dataset.i }; return renderLayer();
     case "sug": S.layer = { type: "sug", i: +a.dataset.i }; return renderLayer();
     case "close": S.layer = null; return renderLayer();
@@ -748,28 +752,6 @@ document.addEventListener("submit", async (e) => {
     }
     return render();
   }
-  if (e.target.id !== "authForm") return;
-  e.preventDefault();
-  const f = new FormData(e.target), err = $("authErr");
-  const email = String(f.get("email") || "").trim(), pass = String(f.get("pass") || ""), name = String(f.get("name") || "").trim();
-  const msg = S.auth === "signup" && !name ? "Enter your name."
-    : !/^\S+@\S+\.\S+$/.test(email) ? "Enter a valid email, like you@example.com."
-    : pass.length < 6 ? "Your password needs at least 6 characters." : "";
-  if (msg) { err.textContent = msg; err.hidden = false; return; }
-  if (!sb) return;
-  S.authBusy = true; render();
-  const { data, error } = S.auth === "signup"
-    ? await sb.auth.signUp({ email, password: pass, options: { data: { name } } })
-    : await sb.auth.signInWithPassword({ email, password: pass });
-  S.authBusy = false;
-  if (error) {
-    render();
-    const er = $("authErr");
-    if (er) { er.textContent = S.auth === "login" ? "That email and password don't match. Try again." : error.message; er.hidden = false; }
-    return;
-  }
-  if (S.auth === "signup" && !data.session) { S.authMsg = `We sent a link to ${email}. Click it to confirm your account, then log in here.`; S.auth = "login"; }
-  render();
 });
 document.addEventListener("input", (e) => {
   const t = e.target;

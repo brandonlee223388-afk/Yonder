@@ -2,6 +2,7 @@
 // reaches the browser. Each student must be logged in and gets DAILY_GRADE_LIMIT grades a day.
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+import { verifyToken } from "@clerk/backend";
 import { SYSTEM_PROMPT, GRADE_SCHEMA, userMessage, normalizeResult } from "../lib/grading.js";
 
 const MAX_REPORT_CHARS = 40000;
@@ -10,18 +11,23 @@ const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Use POST." });
-  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: "The AI Grader isn't set up yet. Ask the Yonder team to add the API key." });
+  if (!process.env.ANTHROPIC_API_KEY || !process.env.CLERK_SECRET_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: "The AI Grader isn't set up yet. Ask the Yonder team to finish the setup." });
+  }
 
   const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ error: "Log in to grade your report." });
 
-  // A Supabase client acting as this student, so the database rules apply to every query.
+  try {
+    await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
+  } catch {
+    return res.status(401).json({ error: "Your login expired. Log in again, then grade." });
+  }
+
+  // A Supabase client acting as this student (Supabase trusts Clerk's token), so the database rules apply.
   const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false, autoRefreshToken: false }
+    accessToken: async () => token
   });
-  const { data: { user } = {}, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !user) return res.status(401).json({ error: "Your login expired. Log in again, then grade." });
 
   const report = String(req.body?.report || "").trim();
   const rubric = String(req.body?.rubric || "").trim();

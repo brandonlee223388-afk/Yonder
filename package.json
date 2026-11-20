@@ -5,6 +5,7 @@
   "engines": { "node": ">=20" },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
+    "@clerk/backend": "^3.27.0",
     "@supabase/supabase-js": "^2.118.0"
   }
 }
