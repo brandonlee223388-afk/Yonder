@@ -2,7 +2,7 @@
   "name": "yonder",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": { "node": "22.x" },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
     "@clerk/backend": "^3.27.0",
