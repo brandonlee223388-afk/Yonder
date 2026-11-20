@@ -1,17 +1,29 @@
-// Grades one lab report with Claude. Runs on the server so the Anthropic API key never
-// reaches the browser. Each student must be logged in and gets DAILY_GRADE_LIMIT grades a day.
+// Grades one lab report with Claude. Runs on the server so no AI credentials reach the browser.
+// Each student must be logged in and gets DAILY_GRADE_LIMIT grades a day.
+//
+// By default it goes through Vercel AI Gateway, which signs requests with the deployment's own
+// OIDC token: no API key to manage, billed to the Vercel team's AI Gateway credits. If
+// ANTHROPIC_API_KEY is set, it calls Anthropic directly with that key instead.
 import Anthropic from "@anthropic-ai/sdk";
+import { getVercelOidcToken } from "@vercel/oidc";
 import { createClient } from "@supabase/supabase-js";
 import { verifyToken } from "@clerk/backend";
 import { SYSTEM_PROMPT, GRADE_SCHEMA, userMessage, normalizeResult } from "../lib/grading.js";
 
 const MAX_REPORT_CHARS = 40000;
 const MAX_RUBRIC_CHARS = 10000;
-const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY
+const DIRECT = Boolean(process.env.ANTHROPIC_API_KEY);
+// Claude Haiku 5.5: fast and about 0.2 cents a grade. Override with GRADER_MODEL.
+const MODEL = process.env.GRADER_MODEL || (DIRECT ? "claude-haiku-5-5" : "anthropic/claude-haiku-5.5");
+
+async function aiClient() {
+  if (DIRECT) return new Anthropic();
+  return new Anthropic({ apiKey: process.env.AI_GATEWAY_API_KEY || await getVercelOidcToken(), baseURL: "https://ai-gateway.vercel.sh" });
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Use POST." });
-  if (!process.env.ANTHROPIC_API_KEY || !process.env.CLERK_SECRET_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+  if (!process.env.CLERK_SECRET_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
     return res.status(503).json({ error: "The AI Grader isn't set up yet. Ask the Yonder team to finish the setup." });
   }
 
@@ -45,18 +57,18 @@ export default async function handler(req, res) {
 
   let response;
   try {
-    response = await anthropic.beta.messages.create({
-      model: "claude-sonnet-5-5",
+    const anthropic = await aiClient();
+    response = await anthropic.messages.create({
+      model: MODEL,
       max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
       output_config: { effort: "medium", format: { type: "json_schema", schema: GRADE_SCHEMA } },
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: userMessage(report, rubric) }]
     });
   } catch (error) {
     if (error instanceof Anthropic.RateLimitError) return res.status(503).json({ error: "The AI Grader is busy right now. Try again in a minute." });
-    if (error instanceof Anthropic.AuthenticationError) return res.status(503).json({ error: "The AI Grader's API key isn't working. Ask the Yonder team to check it." });
+    if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) return res.status(503).json({ error: "The AI Grader can't sign in to the AI service. Ask the Yonder team to check it." });
+    if (error instanceof Anthropic.APIError && error.status === 402) return res.status(503).json({ error: "The AI Grader is out of credit for now. Ask the Yonder team to top it up." });
     if (error instanceof Anthropic.APIError) return res.status(502).json({ error: "The AI Grader had a problem. Try again in a moment." });
     return res.status(502).json({ error: "Couldn't reach the AI Grader. Try again in a moment." });
   }
