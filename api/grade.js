@@ -32,7 +32,8 @@ export default async function handler(req, res) {
 
   try {
     await verifyToken(token, { secretKey: process.env.CLERK_SECRET_KEY });
-  } catch {
+  } catch (error) {
+    console.warn("grade: Clerk token rejected:", error?.reason || error?.message);
     return res.status(401).json({ error: "Your login expired. Log in again, then grade." });
   }
 
@@ -52,6 +53,7 @@ export default async function handler(req, res) {
   const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
   const { count, error: countError } = await supabase
     .from("grades").select("id", { count: "exact", head: true }).gte("created_at", startOfDay.toISOString());
+  if (countError) console.error("grade: daily-limit check failed:", countError.message);
   if (countError) return res.status(500).json({ error: "Couldn't check your daily grades. Try again in a moment." });
   if (count >= limit) return res.status(429).json({ error: `You've used all ${limit} grades for today. Come back tomorrow.`, remaining: 0 });
 
@@ -66,6 +68,7 @@ export default async function handler(req, res) {
       messages: [{ role: "user", content: userMessage(report, rubric) }]
     });
   } catch (error) {
+    console.error("grade: AI request failed:", error?.status, error?.message);
     if (error instanceof Anthropic.RateLimitError) return res.status(503).json({ error: "The AI Grader is busy right now. Try again in a minute." });
     if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) return res.status(503).json({ error: "The AI Grader can't sign in to the AI service. Ask the Yonder team to check it." });
     if (error instanceof Anthropic.APIError && error.status === 402) return res.status(503).json({ error: "The AI Grader is out of credit for now. Ask the Yonder team to top it up." });
