@@ -27,6 +27,8 @@ and an AI Grader (percent grade plus IB MYP Years 2–3 criteria A–D).
    | `SUPABASE_ANON_KEY` | Supabase → Project Settings → API → the public anon / publishable key |
    | `ANTHROPIC_API_KEY` | Optional. Only if you'd rather pay Anthropic directly (console.anthropic.com → API Keys) |
    | `GRADER_MODEL` | Optional. Defaults to Claude Haiku 5.5 |
+   | `GEMINI_API_KEY` | Free option: aistudio.google.com → Get API key (keep this secret). When set, grading uses Gemini |
+   | `GEMINI_MODEL` | Optional. Defaults to `gemini-2.5-flash` |
    | `DAILY_GRADE_LIMIT` | Optional. Grades each student gets per day (default 5) |
 
 4. The AI Grader runs through **Vercel AI Gateway** with no key to set up: Vercel signs the

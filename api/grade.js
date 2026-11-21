@@ -1,18 +1,48 @@
 // Grades one lab report with Claude. Runs on the server so no AI credentials reach the browser.
 // Each student must be logged in and gets DAILY_GRADE_LIMIT grades a day.
 //
-// By default it goes through Vercel AI Gateway, which signs requests with the deployment's own
-// OIDC token: no API key to manage, billed to the Vercel team's AI Gateway credits. If
-// ANTHROPIC_API_KEY is set, it calls Anthropic directly with that key instead.
+// Which AI grades, in order of preference:
+//   ANTHROPIC_API_KEY set -> Claude, called directly with that key.
+//   GEMINI_API_KEY set    -> Google Gemini (free tier from aistudio.google.com; GEMINI_MODEL picks the model).
+//   neither               -> Claude through Vercel AI Gateway, signed with the deployment's OIDC token.
 import Anthropic from "@anthropic-ai/sdk";
 import { getVercelOidcToken } from "@vercel/oidc";
 import { createClient } from "@supabase/supabase-js";
 import { verifyToken } from "@clerk/backend";
-import { SYSTEM_PROMPT, GRADE_SCHEMA, userMessage, normalizeResult } from "../lib/grading.js";
+import { SYSTEM_PROMPT, GRADE_SCHEMA, GRADE_SHAPE, userMessage, normalizeResult } from "../lib/grading.js";
 
 const MAX_REPORT_CHARS = 40000;
 const MAX_RUBRIC_CHARS = 10000;
 const DIRECT = Boolean(process.env.ANTHROPIC_API_KEY);
+const GEMINI = !DIRECT && Boolean(process.env.GEMINI_API_KEY);
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+// Returns the grade as parsed JSON, or { error, status } for the student.
+export async function gradeWithGemini(report, rubric) {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: `${SYSTEM_PROMPT}\n\n${GRADE_SHAPE}` }] },
+      contents: [{ role: "user", parts: [{ text: userMessage(report, rubric) }] }],
+      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 16000 }
+    })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error("grade: Gemini request failed:", res.status, body?.error?.status, body?.error?.message);
+    if (res.status === 429) return { status: 503, error: "The free AI limit is used up for now. Try again in a few minutes, or tomorrow." };
+    if (res.status === 400 || res.status === 401 || res.status === 403) return { status: 503, error: "The AI Grader can't sign in to Gemini. Ask the Yonder team to check the Gemini key." };
+    if (res.status === 404) return { status: 503, error: "The AI Grader's Gemini model isn't available. Ask the Yonder team to check GEMINI_MODEL." };
+    return { status: 502, error: "The AI Grader had a problem. Try again in a moment." };
+  }
+  const candidate = body.candidates?.[0];
+  if (body.promptFeedback?.blockReason || candidate?.finishReason === "SAFETY") {
+    return { status: 422, error: "The AI couldn't grade this text. Check that it's your lab report and try again." };
+  }
+  const text = (candidate?.content?.parts || []).map((p) => p.text || "").join("").trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+  try { return { json: JSON.parse(text) }; } catch { return { status: 502, error: "The grade came back incomplete. Press Grade again." }; }
+}
 // Claude Haiku 5.5: fast and about 0.2 cents a grade. Override with GRADER_MODEL.
 const MODEL = process.env.GRADER_MODEL || (DIRECT ? "claude-haiku-5-5" : "anthropic/claude-haiku-5.5");
 
@@ -57,8 +87,15 @@ export default async function handler(req, res) {
   if (countError) return res.status(500).json({ error: "Couldn't check your daily grades. Try again in a moment." });
   if (count >= limit) return res.status(429).json({ error: `You've used all ${limit} grades for today. Come back tomorrow.`, remaining: 0 });
 
+  let parsed = null;
+  if (GEMINI) {
+    const out = await gradeWithGemini(report, rubric);
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    parsed = out.json;
+  }
+
   let response;
-  try {
+  if (!GEMINI) try {
     const anthropic = await aiClient();
     response = await anthropic.messages.create({
       model: MODEL,
@@ -76,10 +113,12 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: "Couldn't reach the AI Grader. Try again in a moment." });
   }
 
-  if (response.stop_reason === "refusal") return res.status(422).json({ error: "The AI couldn't grade this text. Check that it's your lab report and try again." });
-  const text = response.content.find((block) => block.type === "text")?.text || "";
-  let result = null;
-  try { result = normalizeResult(JSON.parse(text), rubric ? "custom" : "builtin"); } catch { result = null; }
+  if (!GEMINI) {
+    if (response.stop_reason === "refusal") return res.status(422).json({ error: "The AI couldn't grade this text. Check that it's your lab report and try again." });
+    const text = response.content.find((block) => block.type === "text")?.text || "";
+    try { parsed = JSON.parse(text); } catch { parsed = null; }
+  }
+  const result = normalizeResult(parsed, rubric ? "custom" : "builtin");
   if (!result) return res.status(502).json({ error: "The grade came back incomplete. Press Grade again." });
 
   const earned = result.rubric.reduce((n, c) => n + c.earned, 0);

@@ -575,7 +575,7 @@ function updateAIControls() {
   $("aiErr").textContent = a.error; $("aiErr").hidden = !a.error;
   $("aiAvail").textContent = !S.session
     ? `Log in on the dashboard to grade your report. Each student gets ${dailyLimit} grades a day. Until then, you're seeing an example result.`
-    : `Graded by Claude against the MYP Years 2–3 rubric.${a.remaining != null ? ` ${a.remaining} of ${dailyLimit} grades left today.` : ""} Grades are estimates, not official IB marks.`;
+    : `Graded by AI against the MYP Years 2–3 rubric.${a.remaining != null ? ` ${a.remaining} of ${dailyLimit} grades left today.` : ""} Grades are estimates, not official IB marks.`;
 }
 
 function ibTotals(r) {
