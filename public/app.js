@@ -235,6 +235,8 @@ const S = {
 };
 let sb = null, clerk = null, dailyLimit = 5;
 const CLERK_JS = "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@6.42.3/dist/clerk.browser.js";
+/* Clerk's sign-in, sign-up and account screens ship separately; it must load before Clerk starts. */
+const CLERK_UI = "https://cdn.jsdelivr.net/npm/@clerk/ui@1.42.4/dist/ui.browser.js";
 /* Make Clerk's sign-in screens match Yonder. */
 const CLERK_LOOK = { variables: { colorPrimary: "#12a06e", colorText: "#18181b", fontFamily: "Geist, system-ui, sans-serif", borderRadius: "14px" } };
 if (!STEPS[S.last.s - 1]?.parts[S.last.p - 1]) S.last = { s: 1, p: 1 };
@@ -685,9 +687,10 @@ async function initAccounts() {
     const cfg = await (await fetch("/api/config")).json();
     dailyLimit = cfg.dailyLimit || dailyLimit;
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.clerkPublishableKey || !window.supabase) throw new Error("not configured");
+    await loadScript(CLERK_UI);
     await loadScript(CLERK_JS, { "data-clerk-publishable-key": cfg.clerkPublishableKey });
     clerk = window.Clerk;
-    await clerk.load({ appearance: CLERK_LOOK });
+    await clerk.load({ appearance: CLERK_LOOK, ui: { ClerkUI: window.__internal_ClerkUICtor } });
     /* Supabase trusts Clerk's login token, so each student's database rules still apply. */
     sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
       accessToken: async () => (await clerk.session?.getToken()) ?? null
